@@ -13,6 +13,8 @@ The scale factor and zero point must have same shape, and can be either a scalar
 The quantization formula is y = saturate ((x / y_scale) + y_zero_point).
 For saturation, it saturates to [0, 255] if it's uint8, or [-128, 127] if it's int8.
 For (x / y_scale), it's rounding to nearest ties to even. Refer to https://en.wikipedia.org/wiki/Rounding for details. 'y_zero_point' and 'y' must have same type.
+
+(Opset 19 change): Extend supported input types to include float16 and bfloat16.
 )DOC";
 
 ONNX_OPERATOR_SET_SCHEMA(
@@ -41,8 +43,8 @@ ONNX_OPERATOR_SET_SCHEMA(
             static_cast<int64_t>(1))
         .TypeConstraint(
             "T1",
-            {"tensor(float16)", "tensor(float)", "tensor(double)", "tensor(bfloat16)", "tensor(int32)"},
-            "Constrain 'x' to float tensor or int32 tensor.")
+            {"tensor(float16)", "tensor(float)", "tensor(bfloat16)", "tensor(int32)"},
+            "Constrain 'x' to float, float16, bfloat16 or int32 tensor.")
         .TypeConstraint(
             "T2",
             {"tensor(int8)", "tensor(uint8)"},
@@ -68,6 +70,8 @@ The dequantization formula is `y = (x - x_zero_point) * x_scale`. `x_scale` and 
 for per-tensor / per layer quantization, or a 1-D tensor for per-axis quantization.
 `x_zero_point` and `x` must have same type. `x` and `y` must have same shape. In the case of dequantizing int32,
 there's no zero point (zero point is supposed to be 0).
+
+(Opset 19 change): Extend supported output types to include float16 and bfloat16.
 )DOC";
 
 ONNX_OPERATOR_SET_SCHEMA(
@@ -96,7 +100,7 @@ ONNX_OPERATOR_SET_SCHEMA(
             static_cast<int64_t>(1))
         .Attr(
             "dtype",
-            "The data type for the elements of the output tensor. If not specified, use the data type of the input tensor.",
+            "The data type for the elements of the output tensor. If not specified defaults to float",
             AttributeProto::INT,
             OPTIONAL_VALUE)
         .TypeConstraint(
@@ -105,11 +109,12 @@ ONNX_OPERATOR_SET_SCHEMA(
             "Constrain 'x_zero_point' and 'x' to 8-bit/32-bit integer tensor.")
         .TypeConstraint(
             "T2",
-            {"tensor(float16)", "tensor(float)", "tensor(double)", "tensor(bfloat16)", "tensor(int32)"},
-            "Constrain 'y' to float tensor or int32 tensor.")
+            {"tensor(float16)", "tensor(float)", "tensor(bfloat16)", "tensor(int32)"},
+            "Constrain 'y' to float, float16, bfloat16 or int32 tensor.")
         .SetDoc(DequantizeLinear_ver19_doc)
         .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
-          if (ctx.getAttribute("dtype") != nullptr) {
+          auto dtypeAttr = ctx.getAttribute("dtype")
+          if (dtypeAttr) {
             propagateElemTypeFromDtypeToOutput(ctx, ctx.getAttribute("dtype"), 0);
           } else {
             propagateElemTypeFromDtypeToOutput(ctx, TensorProto::FLOAT, 0);
