@@ -7,17 +7,19 @@
 
 namespace ONNX_NAMESPACE {
 
-static const char* QuantizeLinear_ver13_doc = R"DOC(
+static const char* QuantizeLinear_ver19_doc = R"DOC(
 The linear quantization operator. It consumes a high precision tensor, a scale, and a zero point to compute the low precision / quantized tensor.
 The scale factor and zero point must have same shape, and can be either a scalar for per-tensor / per layer quantization, or a 1-D tensor for per-axis quantization.
 The quantization formula is y = saturate ((x / y_scale) + y_zero_point).
 For saturation, it saturates to [0, 255] if it's uint8, or [-128, 127] if it's int8.
 For (x / y_scale), it's rounding to nearest ties to even. Refer to https://en.wikipedia.org/wiki/Rounding for details. 'y_zero_point' and 'y' must have same type.
+
+(Opset 19 change): Extend supported input types to include float16 and bfloat16.
 )DOC";
 
 ONNX_OPERATOR_SET_SCHEMA(
     QuantizeLinear,
-    13,
+    19,
     OpSchema()
         .Input(0, "x", "N-D full precision Input tensor to be quantized.", "T1")
         .Input(
@@ -39,12 +41,15 @@ ONNX_OPERATOR_SET_SCHEMA(
             "(Optional) The axis of the quantization dimension of the input tensor. Ignored for per-tensor quantization. Negative value means counting dimensions from the back. Accepted range is [-r, r-1] where r = rank(input).",
             AttributeProto::INT,
             static_cast<int64_t>(1))
-        .TypeConstraint("T1", {"tensor(float)", "tensor(int32)"}, "Constrain 'x' to float or int32 tensor.")
+        .TypeConstraint(
+            "T1",
+            {"tensor(float16)", "tensor(float)", "tensor(bfloat16)", "tensor(int32)"},
+            "Constrain 'x' to float, float16, bfloat16 or int32 tensor.")
         .TypeConstraint(
             "T2",
             {"tensor(int8)", "tensor(uint8)"},
             "Constrain 'y_zero_point' and 'y' to 8-bit integer tensor.")
-        .SetDoc(QuantizeLinear_ver13_doc)
+        .SetDoc(QuantizeLinear_ver19_doc)
         .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
           if (ctx.hasInput(2)) {
             propagateElemTypeFromInputToOutput(ctx, 2, 0);
@@ -59,19 +64,21 @@ ONNX_OPERATOR_SET_SCHEMA(
           updateOutputShape(ctx, 0, input_shape);
         }));
 
-static const char* DequantizeLinear_ver13_doc = R"DOC(
+static const char* DequantizeLinear_ver19_doc = R"DOC(
 The linear dequantization operator. It consumes a quantized tensor, a scale, and a zero point to compute the full precision tensor.
 The dequantization formula is `y = (x - x_zero_point) * x_scale`. `x_scale` and `x_zero_point` must have same shape, and can be either a scalar
 for per-tensor / per layer quantization, or a 1-D tensor for per-axis quantization.
 `x_zero_point` and `x` must have same type. `x` and `y` must have same shape. In the case of dequantizing int32,
 there's no zero point (zero point is supposed to be 0).
+
+(Opset 19 change): Extend supported output types to include float, float16 and bfloat16.
 )DOC";
 
 ONNX_OPERATOR_SET_SCHEMA(
     DequantizeLinear,
-    13,
+    19,
     OpSchema()
-        .Input(0, "x", "N-D quantized input tensor to be de-quantized.", "T")
+        .Input(0, "x", "N-D quantized input tensor to be de-quantized.", "T1")
         .Input(
             1,
             "x_scale",
@@ -85,21 +92,33 @@ ONNX_OPERATOR_SET_SCHEMA(
             "It's optional. Zero point is 0 when it's not specified.",
             "T",
             OpSchema::Optional)
-        .Output(0, "y", "N-D full precision output tensor. It has same shape as input 'x'.", "tensor(float)")
+        .Output(0, "y", "N-D full precision output tensor. It has same shape as input 'x'.", "T2")
         .Attr(
             "axis",
             "(Optional) The axis of the dequantizing dimension of the input tensor. Ignored for per-tensor quantization. Negative value means counting dimensions from the back. Accepted range is [-r, r-1] where r = rank(input).",
             AttributeProto::INT,
             static_cast<int64_t>(1))
+        .Attr(
+            "dtype",
+            "The data type for the elements of the output tensor. If not specified defaults to float",
+            AttributeProto::INT,
+            OPTIONAL_VALUE)
         .TypeConstraint(
-            "T",
+            "T1",
             {"tensor(int8)", "tensor(uint8)", "tensor(int32)"},
             "Constrain 'x_zero_point' and 'x' to 8-bit/32-bit integer tensor.")
-        .SetDoc(DequantizeLinear_ver13_doc)
+        .TypeConstraint(
+            "T2",
+            {"tensor(float16)", "tensor(float)", "tensor(bfloat16)"},
+            "Constrain 'y' to float, float16 or bfloat16 tensor.")
+        .SetDoc(DequantizeLinear_ver19_doc)
         .TypeAndShapeInferenceFunction([](ONNX_NAMESPACE::InferenceContext& ctx) {
-          auto y_type = ctx.getOutputType(0);
-          // only float is supported
-          y_type->mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto::FLOAT);
+          auto dtypeAttr = ctx.getAttribute("dtype")
+          if (dtypeAttr) {
+            propagateElemTypeFromDtypeToOutput(ctx, ctx.getAttribute("dtype"), 0);
+          } else {
+            propagateElemTypeFromDtypeToOutput(ctx, TensorProto::FLOAT, 0);
+          }
 
           if (!hasInputShape(ctx, 0))
             return;
@@ -107,6 +126,7 @@ ONNX_OPERATOR_SET_SCHEMA(
           auto& input_shape = getInputShape(ctx, 0);
           updateOutputShape(ctx, 0, input_shape);
         }));
+
 
 static const char* DynamicQuantizeLinear_ver11_doc = R"DOC(
 A Function to fuse calculation for Scale, Zero Point and FP32->8Bit convertion of FP32 Input data.
